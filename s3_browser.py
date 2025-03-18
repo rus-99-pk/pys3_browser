@@ -17,9 +17,8 @@ class S3Browser:
         self.endpoint_url = tk.StringVar()  # URL конечной точки / Endpoint URL
         self.access_key = tk.StringVar()  # Ключ доступа / Access key
         self.secret_key = tk.StringVar()  # Секретный ключ / Secret key
-
-        # Создание элементов интерфейса / Create UI elements
-        self.create_widgets()
+        
+        self.create_widgets()  # Создание элементов интерфейса / Create UI elements
 
     def create_widgets(self):
         # Фрейм для настроек подключения / Frame for connection settings
@@ -49,6 +48,11 @@ class S3Browser:
         self.bucket_listbox = tk.Listbox(self.bucket_frame, height=10)
         self.bucket_listbox.pack(fill="x", padx=5, pady=5)
         self.bucket_listbox.bind('<<ListboxSelect>>', self.load_objects)  # Привязка события выбора / Bind selection event
+        
+        # Контекстное меню для бакетов / Context menu for buckets
+        self.bucket_menu = tk.Menu(self.root, tearoff=0)
+        self.bucket_menu.add_command(label="Copy bucket name", command=self.copy_bucket_name)
+        self.bucket_listbox.bind("<Button-3>", self.show_bucket_menu)
 
         # Кнопка обновления списка бакетов / Refresh buckets button
         self.refresh_button = ttk.Button(self.bucket_frame, text="Refresh Buckets", command=self.load_buckets)
@@ -59,14 +63,51 @@ class S3Browser:
         self.object_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
         # Таблица для отображения объектов / Treeview for displaying objects
-        self.object_tree = ttk.Treeview(self.object_frame, columns=("Size", "Last Modified"), show="headings")
+        self.object_tree = ttk.Treeview(self.object_frame, columns=("Name", "Size", "Last Modified"), show="headings")
+        self.object_tree.heading("Name", text="Name")  # Заголовок столбца имени / Name column header
         self.object_tree.heading("Size", text="Size (bytes)")  # Заголовок столбца размера / Size column header
         self.object_tree.heading("Last Modified", text="Last Modified")  # Заголовок столбца даты / Date column header
         self.object_tree.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Контекстное меню для объектов / Context menu for objects
+        self.object_menu = tk.Menu(self.root, tearoff=0)
+        self.object_menu.add_command(label="Copy object path", command=self.copy_object_path)
+        self.object_tree.bind("<Button-3>", self.show_object_menu)
 
         # Кнопка для скачивания выбранного объекта / Download selected object button
         self.download_button = ttk.Button(self.root, text="Download Selected", command=self.download_object)
         self.download_button.pack(pady=5)
+
+    def show_bucket_menu(self, event):
+        # Показать контекстное меню для бакетов / Show context menu for buckets
+        self.bucket_menu.post(event.x_root, event.y_root)
+
+    def show_object_menu(self, event):
+        # Показать контекстное меню для объектов / Show context menu for objects
+        self.object_menu.post(event.x_root, event.y_root)
+
+    def copy_bucket_name(self):
+        # Копировать имя выбранного бакета / Copy selected bucket name
+        selected = self.bucket_listbox.curselection()
+        if selected:
+            bucket_name = self.bucket_listbox.get(selected)
+            self.root.clipboard_clear()
+            self.root.clipboard_append(bucket_name)
+            messagebox.showinfo("Copied", "Bucket name copied to clipboard")
+
+    def copy_object_path(self):
+        # Копировать путь выбранного объекта / Copy selected object path
+        selected_item = self.object_tree.selection()
+        if selected_item:
+            object_path = self.object_tree.item(selected_item)['values'][0]
+            self.root.clipboard_clear()
+            self.root.clipboard_append(object_path)
+            messagebox.showinfo("Copied", "Object path copied to clipboard")
+
+    def log_and_show_error(self, title, message):
+        # Логировать и показать ошибку / Log and show error
+        print(f"ERROR [{title}]: {message}")  # Вывод в терминал / Output to terminal
+        messagebox.showerror(title, message)
 
     def connect_to_s3(self):
         # Подключение к S3 с использованием введенных данных / Connect to S3 using provided data
@@ -88,16 +129,18 @@ class S3Browser:
                 aws_secret_access_key=secret_key,
                 config=Config(signature_version='s3v4', s3={'addressing_style': 'path'})  # Используем стиль пути / Use path style
             )
-            self.load_buckets()  # Загрузка бакетов после подключения / Load buckets after connection
-            messagebox.showinfo("Success", "Connected successfully!")
+            # Проверка подключения путем запроса списка бакетов / Verify connection by requesting bucket list
+            self.s3_client.list_buckets()
+            self.load_buckets()  # Загрузка бакетов после успешного подключения / Load buckets after successful connection
+            messagebox.showinfo("Success", "Connected successfully!")  # Сообщение об успешном подключении / Success message
         except ClientError as e:
             # Обработка ошибок клиента S3 / Handle S3 client errors
-            messagebox.showerror("Error", f"Client error during connection: {str(e)}")
-            self.s3_client = None
+            self.log_and_show_error("Error", f"Client error during connection: {str(e)}")
+            self.s3_client = None  # Сброс клиента при ошибке / Reset client on error
         except Exception as e:
             # Обработка непредвиденных ошибок / Handle unexpected errors
-            messagebox.showerror("Error", f"Unexpected error during connection: {str(e)}")
-            self.s3_client = None
+            self.log_and_show_error("Error", f"Unexpected error during connection: {str(e)}")
+            self.s3_client = None  # Сброс клиента при ошибке / Reset client on error
 
     def load_buckets(self):
         # Загрузка списка бакетов / Load list of buckets
@@ -111,14 +154,14 @@ class S3Browser:
             print(f"Response from list_buckets: {response}")  # Логирование ответа для отладки / Log response for debugging
             if 'Buckets' not in response:
                 # Проверка наличия ключа 'Buckets' в ответе / Check if 'Buckets' key is in response
-                messagebox.showerror("Error", "Server response does not contain 'Buckets' key.")
+                self.log_and_show_error("Error", "Server response does not contain 'Buckets' key.")
                 return
             for bucket in response['Buckets']:
                 self.bucket_listbox.insert(tk.END, bucket['Name'])  # Добавление бакетов в список / Add buckets to list
         except ClientError as e:
-            messagebox.showerror("Error", f"Client error loading buckets: {str(e)}")
+            self.log_and_show_error("Error", f"Client error loading buckets: {str(e)}")
         except Exception as e:
-            messagebox.showerror("Error", f"Unexpected error loading buckets: {str(e)}")
+            self.log_and_show_error("Error", f"Unexpected error loading buckets: {str(e)}")
 
     def load_objects(self, event):
         # Загрузка объектов из выбранного бакета / Load objects from selected bucket
@@ -143,7 +186,7 @@ class S3Browser:
                         obj['LastModified'].strftime('%Y-%m-%d %H:%M:%S')  # Дата изменения / Last modified date
                     ))
         except ClientError as e:
-            messagebox.showerror("Error", f"Failed to load objects: {str(e)}")
+            self.log_and_show_error("Error", f"Failed to load objects: {str(e)}")
 
     def download_object(self):
         # Скачивание выбранного объекта / Download selected object
@@ -166,7 +209,7 @@ class S3Browser:
             self.s3_client.download_file(selected_bucket, key, save_path)  # Скачивание файла / Download file
             messagebox.showinfo("Success", f"File downloaded to {save_path}")
         except ClientError as e:
-            messagebox.showerror("Error", f"Failed to download file: {str(e)}")
+            self.log_and_show_error("Error", f"Failed to download file: {str(e)}")
 
 if __name__ == "__main__":
     # Запуск приложения / Run the application
